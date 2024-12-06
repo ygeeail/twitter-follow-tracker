@@ -77,6 +77,9 @@ for user_id in previous_followers.get("tracked_accounts", []):
                 "Profile Link": f"https://twitter.com/{user.data['username']}"
             })
 
+# Stagger the requests to avoid hitting rate limits (sleep for 5 seconds between requests)
+time.sleep(5)  # Adjust sleep time as needed
+  
 # Save new followers to CSV
 if new_followers:
     with open(output_file, "w", newline="", encoding="utf-8") as csvfile:
