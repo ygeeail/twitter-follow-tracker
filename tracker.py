@@ -1,105 +1,109 @@
 import tweepy
-import os
 import csv
+import os
 import json
 import time
 
-# Authenticate with Twitter API v1.1 (for list management)
-API_KEY = os.getenv("TWITTER_API_KEY")
-API_SECRET = os.getenv("TWITTER_API_SECRET")
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
-ACCESS_SECRET = os.getenv("ACCESS_SECRET")
-
-# Authenticate with Twitter API v2 (for fetching followers)
+# Replace these with your credentials
 BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
 
-# Initialize v1.1 authentication for lists
-auth = tweepy.OAuth1UserHandler(consumer_key=API_KEY,
-                                consumer_secret=API_SECRET,
-                                access_token=ACCESS_TOKEN,
-                                access_token_secret=ACCESS_SECRET)
-
-api = tweepy.API(auth, wait_on_rate_limit=True)
-
-# Initialize v2 authentication
+# Initialize Tweepy client
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
 
-# Twitter list details
-list_owner = "soundb0x"  # Replace with the username of the list owner
-list_name = "Accounts to Track"       # Replace with your list name
+# File to save previous data
+DATA_FILE = "tracked_followings.json"
 
-# File to store previous followers
-previous_followers_file = "previous_followers.json"
-output_file = "new_followers.csv"
+# List ID for your Twitter List
+TRACKED_LIST_ID = "1864974579615306005"  # Replace with your List ID
 
-# Load previous followers from file
-if os.path.exists(previous_followers_file):
-    with open(previous_followers_file, "r") as file:
-        previous_followers = json.load(file)
-else:
-    previous_followers = {}
 
-# Fetch the list ID using v1.1
-try:
-    list_id = api.get_list(screen_name=list_owner, slug=list_name).id
-    print(f"List ID: {list_id}")
-except tweepy.errors.Forbidden as e:
-    print("Error: Access to the list denied. Check your API access permissions.")
-    print(str(e))
+# Function to get following for a user
+def get_following(user_id):
+    following = []
+    paginator = tweepy.Paginator(client.get_users_following, id=user_id, max_results=500)
+    for page in paginator:
+        if page.data:
+            following.extend(page.data)
+        time.sleep(1)  # Stagger requests to avoid hitting rate limits
+    return following
 
-# Fetch current followers (using v2 endpoint)
-def get_followers(user_id):
-    followers = []
-    response = client.get_users_followers(id=user_id, max_results=10000)  # Adjust max_results as needed
-    if response.data:
-        followers = [user.id for user in response.data]
-    return followers
 
-# Track new followers for the list members
-new_followers = []
-for user_id in previous_followers.get("tracked_accounts", []):
-    current_followers = get_followers(user_id)
+# Function to fetch tracked accounts from the Twitter List
+def get_tracked_accounts_from_list(list_id):
+    tracked_accounts = []
+    paginator = tweepy.Paginator(client.get_list_members, id=list_id, max_results=100)
+    for page in paginator:
+        if page.data:
+            tracked_accounts.extend(page.data)
+        time.sleep(1)  # Stagger requests
+    return tracked_accounts
 
-    # Compare previous followers with current followers
-    previous = set(previous_followers.get(str(user_id), []))
-    current = set(current_followers)
 
-    new_ids = current - previous
+# Function to load previously saved followings
+def load_previous_followings():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            return json.load(file)
+    return {}
 
-    if new_ids:
-        for user_id in new_ids:
-            user = client.get_user(id=user_id)
-            new_followers.append({
-                "Tracked Account Handle": f"@{user.data['username']}",
-                "Tracked Account Name": user.data['name'],
-                "New Follow Handle": f"@{user.data['username']}",
-                "New Follow Name": user.data['name'],
-                "Profile Description": user.data['description'],
-                "Profile Link": f"https://twitter.com/{user.data['username']}"
-            })
 
-# Stagger the requests to avoid hitting rate limits (sleep for 5 seconds between requests)
-time.sleep(5)  # Adjust sleep time as needed
-  
-# Save new followers to CSV
-if new_followers:
-    with open(output_file, "w", newline="", encoding="utf-8") as csvfile:
-        fieldnames = [
-            "Tracked Account Handle",
-            "Tracked Account Name",
-            "New Follow Handle",
-            "New Follow Name",
-            "Profile Description",
-            "Profile Link"
-        ]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(new_followers)
+# Function to save the current followings
+def save_current_followings(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=4)
 
-    print(f"New followers saved to {output_file}")
-else:
-    print("No new followers found.")
 
-# Save the updated followers data
-with open(previous_followers_file, "w") as file:
-    json.dump(previous_followers, file)
+# Function to save new follows to a CSV
+def save_new_follows_to_csv(tracked_user, new_follows):
+    with open("new_follows.csv", "a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        for user in new_follows:
+            writer.writerow([
+                tracked_user.username,
+                tracked_user.name,
+                user.username,
+                user.name,
+                user.description,
+                f"https://twitter.com/{user.username}"
+            ])
+
+
+# Main function
+def main():
+    # Load previously saved data
+    previous_followings = load_previous_followings()
+
+    # Fetch tracked accounts from the Twitter List
+    tracked_accounts = get_tracked_accounts_from_list(TRACKED_LIST_ID)
+
+    # Current followings data
+    current_followings = {}
+
+    # Check followings for each tracked account
+    for tracked_account in tracked_accounts:
+        print(f"Fetching followings for {tracked_account.username}...")
+        following = get_following(tracked_account.id)
+
+        # Store current followings
+        current_followings[tracked_account.username] = [user.id for user in following]
+
+        # Compare with previous followings to find new follows
+        previous = set(previous_followings.get(tracked_account.username, []))
+        current = set(user.id for user in following)
+        new_follow_ids = current - previous
+
+        # Get details of new follows
+        new_follows = [user for user in following if user.id in new_follow_ids]
+
+        # Save new follows to CSV
+        save_new_follows_to_csv(tracked_account, new_follows)
+
+        # Stagger requests
+        time.sleep(10)  # Adjust sleep as needed
+
+    # Save the current followings for the next run
+    save_current_followings(current_followings)
+
+
+if __name__ == "__main__":
+    main()
