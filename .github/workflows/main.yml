@@ -1,8 +1,9 @@
 name: Twitter Follow Tracker
 
 on:
+  workflow_dispatch:  # This allows manual triggering of the workflow
   schedule:
-    - cron: "0 0 */3 * *" # Runs every 3 days
+    - cron: "0 0 */3 * *" # Runs every 3 days at midnight
 
 jobs:
   track-followings:
